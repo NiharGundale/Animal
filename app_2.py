@@ -93,7 +93,7 @@ def add_user(username, password):
 # === Page Configuration ===
 st.set_page_config(
     page_title=" Animal Disease Detector",
-    page_icon="🐄",
+    page_icon="",
     layout="wide" 
 )
 
