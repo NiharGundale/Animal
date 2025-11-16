@@ -209,7 +209,7 @@ def login_form():
 def main_app():
     """The core Animal Disease Detector functionality."""
     
-    st.title("🐄 Poultry & Cattle Disease Detector")
+    st.title("Animal Disease Detector")
     st.write(f"Welcome back, **{st.session_state.username}**! Use the controls to upload an image for analysis.")
     
     # Logout button in the main sidebar
