@@ -8,6 +8,7 @@ import pymongo
 import bcrypt
 import base64 # Required for Base64 encoding for download link
 from fpdf import FPDF # Required for PDF generation (fpdf2 package)
+import tempfile # For creating temporary files
 
 # --- Configuration & Initialization ---
 
@@ -83,7 +84,7 @@ def add_user(username, password):
 # === Page Configuration ===
 st.set_page_config(
     page_title=" Animal Disease Detector",
-    page_icon="",
+    page_icon="🐄",
     layout="wide" 
 )
 
@@ -115,7 +116,6 @@ cow_disease_info = {
         "treatment": "Continue proper nutrition, hygiene, and maintain your regular vaccination schedule."
     },
     "lumpycows": {
-        # FIX: Replaced '—' (em dash) with '--' to avoid UnicodeEncodeError in latin-1
         "description": "Lumpy Skin Disease (LSD) detected--a viral infection spread by insects, causing skin nodules.",
         "treatment": "Isolate infected animals immediately, provide antiviral medication, and implement strict fly control measures. Consult a veterinarian."
     }
@@ -126,17 +126,14 @@ poultry_disease_info = {
         "treatment": "Continue providing a balanced diet, clean water, and proper coop hygiene to prevent disease."
     },
     "coryza": {
-        # FIX: Replaced '—' (em dash) with '--' to avoid UnicodeEncodeError in latin-1
         "description": "Infectious Coryza--a bacterial disease causing swelling of the face, foul-smelling nasal discharge, and reduced egg production.",
         "treatment": "Treat with broad-spectrum antibiotics (like sulfonamides) and improve ventilation immediately."
     },
     "crd": {
-        # FIX: Replaced '—' (em dash) with '--' to avoid UnicodeEncodeError in latin-1
         "description": "Chronic Respiratory Disease (CRD)--caused by Mycoplasma gallisepticum, leading to coughing, sneezing, and weight loss.",
         "treatment": "Administer Tylosin or Tiamulin as prescribed by a vet and disinfect housing areas thoroughly."
     },
     "Fowlpox": {
-        # FIX: Replaced '—' (em dash) with '--' to avoid UnicodeEncodeError in latin-1
         "description": "Fowlpox--a slow-spreading viral disease that causes lesions (scabs) on the comb, wattles, and eyelids.",
         "treatment": "Vaccinate healthy birds in the flock and isolate infected ones. Maintain a clean and dry coop environment."
     },
@@ -158,14 +155,8 @@ def create_download_link(pdf_content, filename):
     """
     Generates a download link for a PDF file using Base64 encoding.
     """
-    # Use output(dest='S') to get the PDF as a string buffer, then encode to Base64
-    # The encoding issue is resolved by ensuring the input text (disease info)
-    # does not contain characters outside the latin-1 range (like the em-dash).
     b64 = base64.b64encode(pdf_content.output(dest='S').encode('latin-1')).decode('latin-1')
-    
-    # Create the Markdown download link
     href = f'<a href="data:application/octet-stream;base64,{b64}" download="{filename}.pdf">⬇️ Download Analysis Report (PDF)</a>'
-    
     return href
 
 # ------------------------------------
@@ -181,10 +172,9 @@ def logout():
 def login_form():
     """Renders the centered login/signup UI."""
     
-    st.title("Animal Disease Detector")
+    st.title("🐄 Animal Disease Detector")
     st.markdown("---")
     
-    # Use columns to center the form: [1 | 1 | 1] ratio
     col_empty1, col_form, col_empty2 = st.columns([1, 1, 1])
     
     with col_form:
@@ -259,100 +249,126 @@ def main_app():
         # 2. Handle analysis on button click
         if analyze_button:
             if uploaded_file is not None:
-                with st.spinner("🔬 Analyzing image..."):
-                    
-                    img_array = preprocess_image(pil_img)
+                # --- Create a temporary file for the image to be embedded in PDF ---
+                temp_img_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+                pil_img.save(temp_img_file.name)
+                temp_img_file.close() # Close the file handle immediately after saving
 
-                    # --- Run Prediction ---
-                    if animal_type == "Cow":
-                        preds = cow_model.predict(img_array)
-                        prediction = preds[0][0]
+                try: # Wrap the PDF generation in a try-finally to ensure cleanup
+                    with st.spinner("🔬 Analyzing image and generating report..."):
                         
-                        # Assuming a binary model: 0 is healthy, 1 is lumpy
-                        class_index = int(prediction > 0.5) 
-                        confidence = prediction if class_index == 1 else 1 - prediction
-                        predicted_label = cow_class_names[class_index]
-                        info = cow_disease_info.get(predicted_label, {})
-                        model_used = "Cow Disease Model"
+                        img_array = preprocess_image(pil_img)
 
-                    elif animal_type == "Poultry":
-                        preds = poultry_model.predict(img_array)
-                        pred_idx = np.argmax(preds[0])
-                        confidence = np.max(preds[0])
-                        predicted_label = poultry_class_labels[pred_idx]
-                        info = poultry_disease_info.get(predicted_label, {})
-                        model_used = "Poultry Disease Model"
-                        
-                    
-                    # --- Collect final results ---
-                    diagnosis_result = predicted_label.upper()
-                    confidence_percent = f"{confidence*100:.2f}%"
-                    description = info.get('description', 'No detailed information available.')
-                    treatment = info.get('treatment', 'No treatment information available. Consult a veterinarian immediately.')
+                        # --- Run Prediction ---
+                        if animal_type == "Cow":
+                            preds = cow_model.predict(img_array)
+                            prediction = preds[0][0]
+                            
+                            class_index = int(prediction > 0.5) 
+                            confidence = prediction if class_index == 1 else 1 - prediction
+                            predicted_label = cow_class_names[class_index]
+                            info = cow_disease_info.get(predicted_label, {})
+                            model_used = "Cow Disease Model"
 
-                    # Handle 'not_poultry' or 'Unlabeled'
-                    if predicted_label in ['Unlabeled', 'not_poultry']:
-                        st.warning(f"**Diagnosis:** ⚠️ {diagnosis_result} ({confidence_percent}) - The model suggests this image may not be suitable for analysis or falls into an unknown category.")
-                        st.info("Please try another image that clearly shows the animal.")
-                    else:
-                        # --- Display Results ---
-                        st.success(f"**Diagnosis:** ✅ **{diagnosis_result}** ({confidence_percent})")
-                        st.markdown("---")
-                        st.info(f"**Description:**\n{description}")
-                        st.warning(f"**Recommended Action:**\n{treatment}")
+                        elif animal_type == "Poultry":
+                            preds = poultry_model.predict(img_array)
+                            pred_idx = np.argmax(preds[0])
+                            confidence = np.max(preds[0])
+                            predicted_label = poultry_class_labels[pred_idx]
+                            info = poultry_disease_info.get(predicted_label, {})
+                            model_used = "Poultry Disease Model"
+                            
                         
-                        # =========================================================
-                        # === PDF GENERATION & DOWNLOAD LOGIC ===
-                        # =========================================================
-                        
-                        # 1. Create PDF object
-                        pdf = FPDF()
-                        pdf.add_page()
-                        pdf.set_font("Arial", size=12)
-                        
-                        # 2. Add content to PDF
-                        pdf.cell(200, 10, txt="Animal Disease Detection Report", ln=1, align="C")
-                        pdf.ln(5)
+                        # --- Collect final results ---
+                        diagnosis_result = predicted_label.upper()
+                        confidence_percent = f"{confidence*100:.2f}%"
+                        description = info.get('description', 'No detailed information available.')
+                        treatment = info.get('treatment', 'No treatment information available. Consult a veterinarian immediately.')
 
-                        # Write metadata
-                        pdf.set_font("Arial", 'B', 12)
-                        pdf.cell(200, 10, txt=f"Analysis for: {animal_type}", ln=1)
-                        pdf.cell(200, 10, txt=f"Model Used: {model_used}", ln=1)
-                        pdf.ln(5)
+                        # Handle 'not_poultry' or 'Unlabeled'
+                        if predicted_label in ['Unlabeled', 'not_poultry']:
+                            st.warning(f"**Diagnosis:** ⚠️ {diagnosis_result} ({confidence_percent}) - The model suggests this image may not be suitable for analysis or falls into an unknown category.")
+                            st.info("Please try another image that clearly shows the animal.")
+                        else:
+                            # --- Display Results ---
+                            st.success(f"**Diagnosis:** ✅ **{diagnosis_result}** ({confidence_percent})")
+                            st.markdown("---")
+                            st.info(f"**Description:**\n{description}")
+                            st.warning(f"**Recommended Action:**\n{treatment}")
+                            
+                            # =========================================================
+                            # === PDF GENERATION & DOWNLOAD LOGIC (with Image) ===
+                            # =========================================================
+                            
+                            # 1. Create PDF object
+                            pdf = FPDF()
+                            pdf.add_page()
+                            pdf.set_font("Arial", size=12)
+                            
+                            # 2. Add header
+                            pdf.cell(200, 10, txt="Animal Disease Detection Report", ln=1, align="C")
+                            pdf.ln(5)
 
-                        # Write Diagnosis
-                        pdf.set_font("Arial", 'B', 14)
-                        pdf.cell(200, 10, txt=f"DIAGNOSIS: {diagnosis_result}", ln=1)
-                        pdf.set_font("Arial", '', 12)
-                        pdf.cell(200, 10, txt=f"Confidence: {confidence_percent}", ln=1)
-                        
-                        pdf.ln(5)
-                        
-                        # Write Description
-                        pdf.set_font("Arial", 'B', 12)
-                        pdf.cell(200, 10, txt="Description:", ln=1)
-                        pdf.set_font("Arial", '', 12)
-                        # The multi_cell function handles text wrapping
-                        pdf.multi_cell(0, 10, txt=description)
-                        
-                        pdf.ln(5)
+                            # 3. Add the analyzed image
+                            pdf.set_font("Arial", 'B', 12)
+                            pdf.cell(200, 10, txt="Analyzed Image:", ln=1)
+                            pdf.ln(2)
+                            # Place the image, dynamically resizing it to fit the page width (e.g., 100mm)
+                            # 'x' and 'y' are optional, 'w' and 'h' are width and height. If one is 0, it auto-scales.
+                            # Get image dimensions to maintain aspect ratio
+                            img_width, img_height = pil_img.size
+                            # Calculate desired width for PDF (e.g., 100mm = 10cm)
+                            pdf_img_width = 100 
+                            # Calculate height to maintain aspect ratio
+                            pdf_img_height = (img_height / img_width) * pdf_img_width
+                            
+                            # Center the image
+                            x_pos = (210 - pdf_img_width) / 2 # A4 width is 210mm
+                            pdf.image(temp_img_file.name, x=x_pos, w=pdf_img_width)
+                            pdf.ln(pdf_img_height + 5) # Move cursor down after the image
 
-                        # Write Treatment
-                        pdf.set_font("Arial", 'B', 12)
-                        pdf.cell(200, 10, txt="Recommended Action:", ln=1)
-                        pdf.set_font("Arial", '', 12)
-                        pdf.multi_cell(0, 10, txt=treatment)
+                            # Write metadata
+                            pdf.set_font("Arial", 'B', 12)
+                            pdf.cell(200, 10, txt=f"Analysis for: {animal_type}", ln=1)
+                            pdf.cell(200, 10, txt=f"Model Used: {model_used}", ln=1)
+                            pdf.ln(5)
+
+                            # Write Diagnosis
+                            pdf.set_font("Arial", 'B', 14)
+                            pdf.cell(200, 10, txt=f"DIAGNOSIS: {diagnosis_result}", ln=1)
+                            pdf.set_font("Arial", '', 12)
+                            pdf.cell(200, 10, txt=f"Confidence: {confidence_percent}", ln=1)
+                            
+                            pdf.ln(5)
+                            
+                            # Write Description
+                            pdf.set_font("Arial", 'B', 12)
+                            pdf.cell(200, 10, txt="Description:", ln=1)
+                            pdf.set_font("Arial", '', 12)
+                            pdf.multi_cell(0, 10, txt=description)
+                            
+                            pdf.ln(5)
+
+                            # Write Treatment
+                            pdf.set_font("Arial", 'B', 12)
+                            pdf.cell(200, 10, txt="Recommended Action:", ln=1)
+                            pdf.set_font("Arial", '', 12)
+                            pdf.multi_cell(0, 10, txt=treatment)
 
 
-                        # 3. Create the download link in Streamlit
-                        filename = f"{animal_type}_{predicted_label.replace(' ', '_')}_report"
-                        download_link = create_download_link(pdf, filename)
-                        
-                        st.markdown("---")
-                        st.markdown(download_link, unsafe_allow_html=True)
-                        st.markdown("---")
+                            # 4. Create the download link in Streamlit
+                            filename = f"{animal_type}_{predicted_label.replace(' ', '_')}_report"
+                            download_link = create_download_link(pdf, filename)
+                            
+                            st.markdown("---")
+                            st.markdown(download_link, unsafe_allow_html=True)
+                            st.markdown("---")
 
-                        # =========================================================
+                            # =========================================================
+                finally:
+                    # --- Clean up the temporary image file ---
+                    if os.path.exists(temp_img_file.name):
+                        os.remove(temp_img_file.name)
             
             else:
                 st.error("🛑 Please upload an image first before analyzing.")
